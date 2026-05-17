@@ -3,11 +3,16 @@
 自动扫描 plugins/ 目录，加载所有 BasePlugin 子类
 """
 import asyncio
+import html
 import importlib.util
 import inspect
 import logging
+import re
+import sys
 from pathlib import Path
-from telethon import TelegramClient
+
+from telethon import TelegramClient, events
+
 from core.plugin_base import BasePlugin
 
 logger = logging.getLogger(__name__)
@@ -45,7 +50,53 @@ class PluginManager:
                 logger.exception("[plugin_manager] 加载 %s 失败: %s", py_file, e)
         return loaded
 
+    def _register_help_handler(self):
+        """注册 #<插件名> help 通用说明处理器。
+
+        优先于各插件自身 handler 注册，捕获后 StopPropagation，
+        避免插件自身的 handler 收到未知子命令时执行意外操作。
+        """
+        prefix = re.escape(self.config.get("CMD_PREFIX", "#"))
+        names = sorted(self._plugins.keys(), key=len, reverse=True)
+        if not names:
+            return
+
+        pattern = rf"(?i)^{prefix}({'|'.join(re.escape(n) for n in names)})\s+help$"
+
+        @self.client.on(events.NewMessage(outgoing=True, pattern=pattern))
+        async def _help_handler(event):
+            name = event.pattern_match.group(1).lower()
+            plugin = self._plugins.get(name)
+            if not plugin:
+                return
+
+            mod = sys.modules.get(f"plugins.{name}")
+            doc = (mod.__doc__ or "").strip() if mod else ""
+
+            lines = [f"<b>#{html.escape(name)}</b>"]
+            if plugin.description:
+                lines.append(html.escape(plugin.description))
+            if doc:
+                lines.append("")
+                lines.append(doc)
+
+            text = "\n".join(lines)
+
+            await event.delete()
+            msg = await self.client.send_message(event.chat_id, text, parse_mode="html")
+            async def _cleanup():
+                await asyncio.sleep(30)
+                try:
+                    await msg.delete()
+                except Exception:
+                    pass
+            asyncio.create_task(_cleanup())
+
+            raise events.StopPropagation
+
     async def setup_all(self):
+        self._register_help_handler()
+
         async def _safe_setup(p):
             try:
                 await p.setup()
@@ -73,3 +124,4 @@ class PluginManager:
     @property
     def plugins(self) -> dict[str, BasePlugin]:
         return dict(self._plugins)
+
