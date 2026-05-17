@@ -73,6 +73,7 @@ class IgPlugin(BasePlugin):
         """初始化 instagrapi 客户端并登录。"""
         try:
             from instagrapi import Client
+            from instagrapi.mixins.challenge import ChallengeChoice, ChallengeUnknownStep
         except ImportError:
             logger.error("[ig] 未安装 instagrapi，请运行: pip install instagrapi")
             return
@@ -84,6 +85,27 @@ class IgPlugin(BasePlugin):
         cl = Client()
         cl.delay_range = [1, 3]
 
+        def _code_handler(user, choice):
+            logger.info("[ig] 需要验证码，请查收邮箱/短信")
+            return None
+        cl.challenge_code_handler = _code_handler
+
+        def _patched_resolve(challenge_url):
+            step_name = cl.last_json.get("step_name", "")
+            if step_name == "STEP_NAME":
+                logger.info("[ig] 检测到 STEP_NAME 挑战，尝试选择邮箱验证...")
+                cl._send_private_request(challenge_url, {"choice": "0"})
+                code = cl.challenge_code_or_raised(ChallengeChoice.EMAIL, wait_seconds=5, attempts=24)
+                if code:
+                    cl._send_private_request(challenge_url, {"security_code": code})
+                    assert cl.last_json.get("action", "") == "close"
+                    assert cl.last_json.get("status", "") == "ok"
+                    return True
+            msg = str(cl.last_json)[:200]
+            raise ChallengeUnknownStep(
+                "ChallengeResolve: Unknown step_name " + step_name)
+        cl.challenge_resolve_simple = _patched_resolve
+
         if _SESSION_FILE.exists():
             try:
                 cl.load_settings(_SESSION_FILE)
@@ -93,14 +115,26 @@ class IgPlugin(BasePlugin):
                 logger.info("[ig] session 失效，重新登录...")
                 cl = Client()
                 cl.delay_range = [1, 3]
+                cl.challenge_code_handler = _code_handler
+                cl.challenge_resolve_simple = _patched_resolve
                 cl.login(username, password)
         else:
-            cl.login(username, password)
-            logger.info("[ig] 登录成功")
+            try:
+                cl.login(username, password)
+                logger.info("[ig] 登录成功")
+            except ChallengeUnknownStep as e:
+                logger.warning("[ig] 挑战失败: %s", e)
+                raise Exception(
+                    "Instagram 要求验证身份。\n"
+                    "请先打开 Instagram App，确认登录通知，\n"
+                    "或检查邮箱中的验证码，然后重试 #ig login。"
+                )
+            except Exception as e:
+                logger.error("[ig] 登录失败: %s", e)
+                raise
 
         cl.dump_settings(_SESSION_FILE)
         self._cl = cl
-
     async def setup(self):
         prefix = re.escape(self.config.get("CMD_PREFIX", "#"))
         cmd_re = re.compile(rf"^{prefix}ig(?:\s+(.*))?$", re.IGNORECASE)
