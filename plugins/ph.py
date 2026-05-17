@@ -617,19 +617,21 @@ class PhPlugin(BasePlugin):
             )
             await self.client(UploadProfilePhotoRequest(file=uploaded))
 
-            # 删除所有旧头像，只保留最新的
+            # 分批删除旧头像（Telegram API 单次请求有限制）
             try:
                 photos = await self.client.get_profile_photos("me")
                 if len(photos) > 1:
-                    # photos[0] 是刚刚上传的新头像，剩下的全是旧的
-                    to_del = [
-                        InputPhoto(id=p.id, access_hash=p.access_hash,
-                                   file_reference=p.file_reference)
-                        for p in photos[1:]
-                    ]
-                    if to_del:
+                    old_photos = photos[1:]
+                    # 每批最多删 50 张
+                    for i in range(0, len(old_photos), 50):
+                        batch = old_photos[i:i+50]
+                        to_del = [
+                            InputPhoto(id=p.id, access_hash=p.access_hash,
+                                       file_reference=p.file_reference)
+                            for p in batch
+                        ]
                         await self.client(DeletePhotosRequest(id=to_del))
-                        logger.info("[ph] 已清理 %d 张旧头像", len(to_del))
+                    logger.info("[ph] 已清理 %d 张旧头像", len(old_photos))
             except Exception as e:
                 logger.warning("[ph] 清理旧头像失败: %s", e)
 
