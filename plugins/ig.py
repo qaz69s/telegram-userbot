@@ -56,6 +56,7 @@ class IgPlugin(BasePlugin):
         self._uid_cache: dict[str, str] = {}
         # 缓存：username -> (timestamp, [video_pk, ...])
         self._media_cache: dict[str, tuple[float, list]] = {}
+        self._following_cache: list[str] = []
 
     async def on_startup(self):
         self._load_config()
