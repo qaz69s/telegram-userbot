@@ -36,6 +36,7 @@ class PluginManager:
                 spec = importlib.util.spec_from_file_location(module_name, py_file)
                 mod  = importlib.util.module_from_spec(spec)
                 spec.loader.exec_module(mod)
+                sys.modules[module_name] = mod
                 for _, obj in inspect.getmembers(mod, inspect.isclass):
                     if (issubclass(obj, BasePlugin)
                             and obj is not BasePlugin
