@@ -238,9 +238,13 @@ class GifPlugin(BasePlugin):
             cmd += ["-t", str(duration)]
         cmd += ["-f", "webm", output_path]
 
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
         if result.returncode != 0:
-            raise Exception(f"FFmpeg 错误: {result.stderr[:300]}")
+            err_msg = result.stderr.strip()
+            # 移除 FFmpeg 版本标题
+            lines = [l for l in err_msg.split(chr(10)) if not l.startswith("ffmpeg") and not l.startswith("  built") and not l.startswith("  config") and not l.startswith("  lib")]
+            actual_err = chr(10).join(lines)[:500]
+            raise Exception(f"FFmpeg 错误: {actual_err or err_msg[:200]}")
         if not Path(output_path).exists():
             raise Exception("FFmpeg 未生成输出文件")
 
