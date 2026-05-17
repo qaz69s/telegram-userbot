@@ -18,6 +18,7 @@ import html
 import logging
 import random
 import re
+from datetime import datetime, timezone, timedelta
 
 from telethon import events
 
@@ -25,7 +26,8 @@ from core.plugin_base import BasePlugin
 
 logger = logging.getLogger(__name__)
 
-_INTERVAL    = 12 * 3600  # 自动删除间隔：12 小时
+_TZ_BEIJING  = timezone(timedelta(hours=8))
+_DEL_HOUR    = 2          # 北京时间凌晨 2 点执行
 _BATCH_SIZE  = 50         # 每次删除条数
 _DELAY_MIN   = 0.4        # 每条消息删除间隔下限（秒）
 _DELAY_MAX   = 1.2        # 每条消息删除间隔上限（秒）
@@ -34,7 +36,7 @@ _NOTIFY_TTL  = 10         # 通知消息自动删除秒数
 
 class DelPlugin(BasePlugin):
     name        = "del"
-    description = "#del 每 12 小时静默删除频道/群组中自己的 50 条历史发言"
+    description = "#del 每天北京时间 02:00 自动删除群/频道中自己的 50 条历史发言"
     version     = "1.0.0"
 
     def __init__(self, *args, **kwargs):
@@ -68,7 +70,7 @@ class DelPlugin(BasePlugin):
             if sub == "on":
                 self._targets.add(chat_id)
                 await self.db.kv_set("del", "targets", list(self._targets))
-                await self._notify(f"已为该会话启用定时删除（每 {_INTERVAL // 3600} 小时删最早 {_BATCH_SIZE} 条）")
+                await self._notify(f"已为该会话启用定时删除（每天北京时间 02:00 自动删最早 {_BATCH_SIZE} 条）")
 
             elif sub == "off":
                 self._targets.discard(chat_id)
@@ -104,8 +106,17 @@ class DelPlugin(BasePlugin):
     # ── 定时循环 ─────────────────────────────────────────────────────
 
     async def _auto_loop(self):
+        """每天北京时间 _DEL_HOUR:00 执行删除。"""
         while True:
-            await asyncio.sleep(_INTERVAL)
+            now = datetime.now(_TZ_BEIJING)
+            # 计算到下一个 _DEL_HOUR:00 的秒数
+            target = now.replace(hour=_DEL_HOUR, minute=0, second=0, microsecond=0)
+            if now.hour >= _DEL_HOUR:
+                target += timedelta(days=1)
+            wait = (target - now).total_seconds()
+            logger.info("[del] 下次删除在 %.1f 小时后（北京时间 %02d:00）", wait / 3600, _DEL_HOUR)
+            await asyncio.sleep(wait)
+
             if not self._me_id:
                 continue
             total = await self._run_all()
