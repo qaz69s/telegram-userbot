@@ -166,6 +166,8 @@ class IgPlugin(BasePlugin):
                 await self._cmd_del(event.chat_id, target)
             elif action == "list":
                 await self._cmd_list(event.chat_id)
+            elif action == "following":
+                await self._cmd_following(event.chat_id)
             else:
                 await self._cmd_send(event.chat_id)
 
@@ -291,10 +293,6 @@ class IgPlugin(BasePlugin):
         await self._tip(chat_id, "\n".join(lines), delay=8)
 
     async def _cmd_send(self, chat_id: int):
-        if not self._accounts:
-            await self._tip(chat_id, "尚未配置账号\n请先使用 `#ig add @用户名` 添加")
-            return
-
         if not self._cl:
             await self._tip(
                 chat_id,
@@ -302,9 +300,16 @@ class IgPlugin(BasePlugin):
             )
             return
 
+        if not self._accounts:
+            # 没有手动添加的账号，从关注列表里随机选
+            users = await self._get_following()
+            if not users:
+                await self._tip(chat_id, "没有可用的关注账号")
+                return
+            self._accounts = users
+
         tip = await self.client.send_message(chat_id, "随机抽取 Instagram 视频中...")
 
-        # 随机选择账号，最多重试3次
         video_path = None
         tried_accounts = set()
         max_retries = min(3, len(self._accounts))
@@ -345,12 +350,14 @@ class IgPlugin(BasePlugin):
             await tip.delete()
 
         finally:
-            # 清理临时文件
             if video_path and Path(video_path).exists():
                 try:
                     Path(video_path).unlink()
                 except Exception:
                     pass
+            # 恢复_accounts列表（如果是关注列表导入的）
+            if len(self._accounts) > 10:
+                self._accounts = []
 
     # ── 核心抓取 ──────────────────────────────────────────────
 
@@ -387,6 +394,40 @@ class IgPlugin(BasePlugin):
         return str(path)
 
     # ── 工具方法 ──────────────────────────────────────────────
+
+
+    async def _cmd_following(self, chat_id: int):
+        """显示当前登录账号的关注列表。"""
+        if not self._cl:
+            await self._tip(chat_id, "Instagram 未登录")
+            return
+        users = await self._get_following()
+        if not users:
+            await self._tip(chat_id, "没有关注任何账号")
+            return
+        lines = [f"<b>关注列表</b>  共 {len(users)} 个账号"]
+        for i, u in enumerate(users[:30], 1):
+            lines.append(f"  {i}. {html.escape(u)}")
+        if len(users) > 30:
+            lines.append(f"  ...还有 {len(users)-30} 个")
+        await self._tip(chat_id, "\n".join(lines), delay=15)
+
+    async def _get_following(self) -> list[str]:
+        """从 Instagram 获取当前登录账号的关注列表（缓存）。"""
+        if self._following_cache:
+            return self._following_cache
+        try:
+            loop = asyncio.get_running_loop()
+            user_id = await loop.run_in_executor(None, self._cl.user_id)
+            following = await loop.run_in_executor(
+                None, lambda: self._cl.user_following(user_id, amount=0, use_cache=False)
+            )
+            self._following_cache = list(following.keys())
+            logger.info("[ig] 已获取关注列表: %d 个账号", len(self._following_cache))
+        except Exception as e:
+            logger.warning("[ig] 获取关注列表失败: %s", e)
+            return []
+        return self._following_cache
 
     async def _tip(self, chat_id: int, text: str, delay: int = 5):
         msg = await self.client.send_message(chat_id, text)
