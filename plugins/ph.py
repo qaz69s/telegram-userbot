@@ -597,19 +597,17 @@ class PhPlugin(BasePlugin):
                 await self._update_avatar()
 
     async def _update_avatar(self) -> bool:
-        """根据当前模式渲染并上传头像。"""
+        """根据当前模式渲染并上传头像，然后清理所有旧头像。"""
         try:
             now = datetime.now(_TZ_BEIJING)
             loop = asyncio.get_running_loop()
 
             if self._mode == "a":
-                # A 模式：十二时辰，奇偶时辰不换就不换（每2小时出现新时辰）
                 idx = _get_shichen_index(now.hour)
                 sc_name, animal = _SHICHEN[idx][0], _SHICHEN[idx][1]
                 png_bytes = await loop.run_in_executor(None, _render_avatar_a, idx)
                 logger.info("[ph-a] 头像 → %s（%s）", sc_name, animal)
             else:
-                # B 模式：以北京时间 epoch_hours 为种子，每小时必然不同
                 epoch_hours = int(now.timestamp() // 3600)
                 png_bytes = await loop.run_in_executor(None, _render_avatar_b, epoch_hours)
                 logger.info("[ph-b] 光晕头像 → seed=%d (%s)", epoch_hours, now.strftime("%H:00"))
@@ -617,31 +615,26 @@ class PhPlugin(BasePlugin):
             uploaded = await self.client.upload_file(
                 io.BytesIO(png_bytes), file_name="avatar.png"
             )
-            result = await self.client(UploadProfilePhotoRequest(file=uploaded))
+            await self.client(UploadProfilePhotoRequest(file=uploaded))
 
-            # 删除上一张插件头像
-            prev_id = self._last_photo_id
+            # 删除所有旧头像，只保留最新的
             try:
-                new_photo = result.photo
-                self._last_photo_id = new_photo.id
-                self._save_state()
-            except Exception:
-                self._last_photo_id = None
-
-            if prev_id is not None:
-                try:
-                    photos = await self.client.get_profile_photos("me")
+                photos = await self.client.get_profile_photos("me")
+                if len(photos) > 1:
+                    # photos[0] 是刚刚上传的新头像，剩下的全是旧的
                     to_del = [
                         InputPhoto(id=p.id, access_hash=p.access_hash,
                                    file_reference=p.file_reference)
-                        for p in photos if p.id == prev_id
+                        for p in photos[1:]
                     ]
                     if to_del:
                         await self.client(DeletePhotosRequest(id=to_del))
-                        logger.info("[ph] 已删除上次插件头像（id=%d）", prev_id)
-                except Exception as e:
-                    logger.warning("[ph] 删除旧插件头像失败: %s", e)
+                        logger.info("[ph] 已清理 %d 张旧头像", len(to_del))
+            except Exception as e:
+                logger.warning("[ph] 清理旧头像失败: %s", e)
 
+            self._last_photo_id = None
+            self._save_state()
             return True
         except Exception as e:
             logger.warning("[ph] 更新头像失败: %s", e)
