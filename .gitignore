@@ -1,0 +1,20 @@
+# 虚拟环境
+.venv/
+venv/
+
+# 运行时数据
+sessions/
+data/
+*.db
+*.db-shm
+*.db-wal
+
+# 环境配置（含密钥）
+.env
+
+# Python 字节码
+__pycache__/
+*.py[cod]
+
+# 日志
+*.log
