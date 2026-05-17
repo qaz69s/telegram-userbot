@@ -423,7 +423,7 @@ class IgPlugin(BasePlugin):
             following = await loop.run_in_executor(
                 None, lambda: self._cl.user_following(user_id, amount=0, use_cache=False)
             )
-            self._following_cache = list(following.keys())
+            self._following_cache = [u.username for u in following.values()]
             logger.info("[ig] 已获取关注列表: %d 个账号", len(self._following_cache))
         except Exception as e:
             logger.warning("[ig] 获取关注列表失败: %s", e)
