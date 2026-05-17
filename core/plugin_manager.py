@@ -52,48 +52,49 @@ class PluginManager:
         return loaded
 
     def _register_help_handler(self):
-        """注册 #<插件名> help 通用说明处理器。
+        prefix = self.config.get("CMD_PREFIX", "#")
 
-        优先于各插件自身 handler 注册，捕获后 StopPropagation，
-        避免插件自身的 handler 收到未知子命令时执行意外操作。
-        """
-        prefix = re.escape(self.config.get("CMD_PREFIX", "#"))
-        names = sorted(self._plugins.keys(), key=len, reverse=True)
-        if not names:
-            return
-
-        pattern = rf"(?i)^{prefix}({'|'.join(re.escape(n) for n in names)})\s+help$"
-
-        @self.client.on(events.NewMessage(outgoing=True, pattern=pattern))
+        @self.client.on(events.NewMessage(outgoing=True))
         async def _help_handler(event):
-            name = event.pattern_match.group(1).lower()
-            plugin = self._plugins.get(name)
-            if not plugin:
-                return
-
-            mod = sys.modules.get(f"plugins.{name}")
-            doc = (mod.__doc__ or "").strip() if mod else ""
-
-            lines = [f"<b>#{html.escape(name)}</b>"]
-            if plugin.description:
-                lines.append(html.escape(plugin.description))
-            if doc:
-                lines.append("")
-                lines.append(doc)
-
-            text = "\n".join(lines)
-
-            await event.delete()
-            msg = await self.client.send_message(event.chat_id, text, parse_mode="html")
-            async def _cleanup():
-                await asyncio.sleep(30)
-                try:
-                    await msg.delete()
-                except Exception:
-                    pass
-            asyncio.create_task(_cleanup())
-
-            raise events.StopPropagation
+            try:
+                text = event.raw_text.strip()
+                if not text.startswith(prefix):
+                    return
+                rest = text[len(prefix):]
+                parts = rest.split(None, 1)
+                if len(parts) != 2:
+                    return
+                name, subcmd = parts[0].lower(), parts[1].lower()
+                if subcmd != "help":
+                    return
+                plugin = self._plugins.get(name)
+                if not plugin:
+                    return
+                mod_name = "plugins." + name
+                mod = sys.modules.get(mod_name)
+                doc = (mod.__doc__ or "").strip() if mod else ""
+                lines = ["<b>#" + html.escape(name) + "</b>"]
+                if plugin.description:
+                    lines.append(html.escape(plugin.description))
+                if doc:
+                    lines.append("")
+                    lines.append(doc)
+                text_out = "\n".join(lines)
+                await event.delete()
+                msg = await self.client.send_message(event.chat_id, text_out, parse_mode='html')
+                async def _cleanup():
+                    await asyncio.sleep(30)
+                    try:
+                        await msg.delete()
+                    except Exception:
+                        pass
+                asyncio.create_task(_cleanup())
+                logger.info("[plugin_manager] help handler: #%s help", name)
+                raise events.StopPropagation
+            except events.StopPropagation:
+                raise
+            except Exception as e:
+                logger.warning("[plugin_manager] help handler error: %s", e)
 
     async def setup_all(self):
         self._register_help_handler()
