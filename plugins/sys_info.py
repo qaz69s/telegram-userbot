@@ -154,32 +154,32 @@ def _build_report() -> str:
     kernel = uname.release
 
     lines = [
-        "**系统状态**",
+        "系统状态",
         "--------------------",
         f"系统     {os_pretty}",
         f"内核     {kernel}",
         f"开机     {_fmt_uptime(sys_uptime)}",
         f"Bot 运行 {_fmt_uptime(bot_uptime)}",
         "",
-        "**CPU**",
+        "CPU",
         f"型号     {cpu_model}",
         f"核心     {cpu_cores_phys} 物理 / {cpu_cores_logi} 逻辑",
         f"频率     {freq_str}",
         f"使用率   {cpu_pct}%",
         f"温度     {cpu_temp}",
         "",
-        "**内存**",
+        "内存",
         f"内存     {_fmt_bytes(mem.used)} / {_fmt_bytes(mem.total)}  ({mem.percent}%)",
         f"Swap     {_fmt_bytes(swap.used)} / {_fmt_bytes(swap.total)}  ({swap.percent}%)",
         "",
-        "**磁盘 /**",
+        "磁盘 /",
         f"已用     {_fmt_bytes(disk.used)} / {_fmt_bytes(disk.total)}  ({disk.percent}%)",
         "",
-        "**网络流量（开机累计）**",
+        "网络流量（开机累计）",
         f"上传     {_fmt_bytes(net.bytes_sent)}",
         f"下载     {_fmt_bytes(net.bytes_recv)}",
     ]
-    return "\n".join(lines)
+    return "```\n" + "\n".join(lines) + "\n```"
 
 
 class SysInfoPlugin(BasePlugin):
