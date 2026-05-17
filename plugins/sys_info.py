@@ -80,12 +80,23 @@ def _get_os_pretty() -> str:
 
 
 def _get_cpu_model() -> str:
-    """从 /proc/cpuinfo 读取 CPU 型号。"""
+    """从 /proc/cpuinfo / lscpu 读取 CPU 型号（支持 ARM64）。"""
     try:
         with open("/proc/cpuinfo") as f:
             for line in f:
                 if line.startswith("model name"):
                     return line.split(":", 1)[1].strip()
+    except Exception:
+        pass
+    # ARM64: lscpu 的 Model name 行
+    try:
+        import subprocess
+        out = subprocess.run(["lscpu"], capture_output=True, text=True, timeout=5).stdout
+        for line in out.split("\n"):
+            if "Model name" in line:
+                m = line.split(":", 1)
+                if len(m) > 1:
+                    return m[1].strip()
     except Exception:
         pass
     return platform.processor() or "未知"
@@ -99,7 +110,25 @@ def _build_report() -> str:
     cpu_cores_phys = psutil.cpu_count(logical=False) or 1
     cpu_cores_logi = psutil.cpu_count(logical=True)
     cpu_freq = psutil.cpu_freq()
-    freq_str = f"{cpu_freq.current:.0f} MHz" if cpu_freq else "未知"
+    if cpu_freq:
+        freq_str = f"{cpu_freq.current:.0f} MHz"
+    else:
+        # VM / ARM: 尝试从 lscpu 取
+        try:
+            import subprocess
+            out = subprocess.run(["lscpu"], capture_output=True, text=True, timeout=5).stdout
+            for line in out.split("\n"):
+                if "CPU max MHz" in line or "CPU min MHz" in line or "CPU dynamic" in line:
+                    continue
+                if "CPU" in line and "MHz" in line or "GHz" in line:
+                    m = re.search(r"[\d.]+(?:GHz|MHz)", line)
+                    if m:
+                        freq_str = m.group(0)
+                        break
+        except Exception:
+            pass
+        if not freq_str:
+            freq_str = "未知"
     cpu_temp = _get_cpu_temp()
 
     # ── 内存 ─────────────────────────────────────────────────
