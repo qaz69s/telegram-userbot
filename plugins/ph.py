@@ -492,6 +492,7 @@ class PhPlugin(BasePlugin):
 
     async def setup(self):
         prefix = re.escape(self.config.get("CMD_PREFIX", "#"))
+        actual_prefix = self.config.get("CMD_PREFIX", "#")
 
         @self.client.on(events.NewMessage(
             outgoing=True,
@@ -510,36 +511,21 @@ class PhPlugin(BasePlugin):
                 self._mode = arg
                 self._save_state()
                 mode_desc = "十二时辰国风（2小时/次）" if arg == "a" else "随机渐变光晕（1小时/次）"
-                tip = await self.client.send_message(event.chat_id, f"🎨 已切换到风格 {arg.upper()}：{mode_desc}\n⏳ 正在应用…")
-                ok = await self._update_avatar()
-                try:
-                    await tip.delete()
-                except Exception:
-                    pass
-                result = f"✅ 风格 {arg.upper()} 已应用" if ok else f"❌ 头像更换失败，请查看日志"
-                tip2 = await self.client.send_message(event.chat_id, result)
-                await asyncio.sleep(4)
-                try:
-                    await tip2.delete()
-                except Exception:
-                    pass
+                result = await self._update_avatar()
+                msg = await self.client.send_message(
+                    event.chat_id,
+                    f"切换到风格 {arg.upper()}：{mode_desc}\n{result}",
+                )
+                await asyncio.sleep(6)
+                await msg.delete()
                 return
 
             # ── #ph now：立即换一次 ───────────────────────────────────
             if arg == "now":
-                tip = await self.client.send_message(event.chat_id, "⏳ 正在更换头像…")
-                ok = await self._update_avatar()
-                try:
-                    await tip.delete()
-                except Exception:
-                    pass
-                result = f"✅ 已更换（风格 {self._mode.upper()}）" if ok else "❌ 头像更换失败，请查看日志"
-                tip2 = await self.client.send_message(event.chat_id, result)
-                await asyncio.sleep(4)
-                try:
-                    await tip2.delete()
-                except Exception:
-                    pass
+                result = await self._update_avatar()
+                msg = await self.client.send_message(event.chat_id, result)
+                await asyncio.sleep(6)
+                await msg.delete()
                 return
 
             # ── #ph / #ph on / #ph off：开关 ─────────────────────────
@@ -554,19 +540,16 @@ class PhPlugin(BasePlugin):
 
             if self._enabled:
                 self._start_loop()
-                await self._update_avatar()
+                result = await self._update_avatar()
                 interval = "2小时" if self._mode == "a" else "1小时"
-                status = f"✅ 自动换头像：已开启（风格 {self._mode.upper()}，每{interval}）"
+                status = f"自动换头像：已开启（风格 {self._mode.upper()}，每{interval}）\n{result}"
             else:
                 self._stop_loop()
-                status = "⏹ 自动换头像：已关闭"
+                status = "自动换头像：已关闭"
 
-            tip = await self.client.send_message(event.chat_id, status)
-            await asyncio.sleep(4)
-            try:
-                await tip.delete()
-            except Exception:
-                pass
+            msg = await self.client.send_message(event.chat_id, status)
+            await asyncio.sleep(5)
+            await msg.delete()
 
     # ── 循环调度 ──────────────────────────────────────────────────────
 
@@ -597,8 +580,8 @@ class PhPlugin(BasePlugin):
             if self._enabled:
                 await self._update_avatar()
 
-    async def _update_avatar(self) -> bool:
-        """根据当前模式渲染并上传头像，然后清理所有旧头像。"""
+    async def _update_avatar(self) -> str:
+        """根据当前模式渲染并上传头像。返回状态文字（直接可发送）。"""
         try:
             now = datetime.now(_TZ_BEIJING)
             loop = asyncio.get_running_loop()
@@ -607,11 +590,11 @@ class PhPlugin(BasePlugin):
                 idx = _get_shichen_index(now.hour)
                 sc_name, animal = _SHICHEN[idx][0], _SHICHEN[idx][1]
                 png_bytes = await loop.run_in_executor(None, _render_avatar_a, idx)
-                logger.info("[ph-a] 头像 → %s（%s）", sc_name, animal)
+                logger.info("[ph-a] 头像 -> %s（%s）", sc_name, animal)
             else:
                 epoch_hours = int(now.timestamp() // 3600)
                 png_bytes = await loop.run_in_executor(None, _render_avatar_b, epoch_hours)
-                logger.info("[ph-b] 光晕头像 → seed=%d (%s)", epoch_hours, now.strftime("%H:00"))
+                logger.info("[ph-b] 光晕头像 -> seed=%d (%s)", epoch_hours, now.strftime("%H:00"))
 
             uploaded = await self.client.upload_file(
                 io.BytesIO(png_bytes), file_name="avatar.png"
@@ -621,17 +604,15 @@ class PhPlugin(BasePlugin):
                 await self.client(UploadProfilePhotoRequest(file=uploaded))
             except FloodWaitError as e:
                 hours = e.seconds / 3600
-                logger.warning("[ph] 头像更换过于频繁，需等待 %.1f 小时 (%d秒)",
-                               hours, e.seconds)
-                # 启用模式下自动暂停，等限流结束再恢复
+                msg = f"头像更换过于频繁，需等待 {hours:.1f} 小时（{e.seconds} 秒）"
+                logger.warning("[ph] %s", msg)
                 if self._enabled:
                     self._enabled = False
                     self._save_state()
                     self._stop_loop()
-                    logger.info("[ph] 已自动暂停自动换头像，%d 秒后可手动 #ph on 恢复", e.seconds)
-                return False
+                return msg
 
-            # 分批删除旧头像（Telegram API 单次请求有限制）
+            # 分批删除旧头像
             try:
                 photos = await self.client.get_profile_photos("me")
                 if len(photos) > 1:
@@ -649,14 +630,13 @@ class PhPlugin(BasePlugin):
                 logger.warning("[ph] 清理旧头像失败: %s", e)
 
             self._save_state()
-            return True
+            return "头像已更换"
         except FloodWaitError as e:
             hours = e.seconds / 3600
-            logger.warning("[ph] 头像更换过于频繁，需等待 %.1f 小时", hours)
-            return False
+            return f"头像更换过于频繁，需等待 {hours:.1f} 小时"
         except Exception as e:
             logger.warning("[ph] 更新头像失败: %s", e)
-            return False
+            return f"头像更换失败：{e}"
 
     # ── 状态持久化 ────────────────────────────────────────────────────
 
