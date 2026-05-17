@@ -356,8 +356,7 @@ class XqsPlugin(BasePlugin):
     def _strip_thought(text):
         return re.sub(r"<thought>.*?</thought>\s*", "", text, flags=re.DOTALL).strip()
 
-    @staticmethod
-    async def _ensure_aiohttp():
+    async def _ensure_aiohttp(self):
         if importlib.util.find_spec("aiohttp") is not None:
             return
         logger.info("[xqs] 正在自动安装 aiohttp...")

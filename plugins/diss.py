@@ -200,8 +200,7 @@ class DissPlugin(BasePlugin):
         """去除 Gemma 4 推理模型输出的 <thought>...</thought> 思考块。"""
         return re.sub(r"<thought>.*?</thought>\s*", "", text, flags=re.DOTALL).strip()
 
-    @staticmethod
-    async def _ensure_aiohttp():
+    async def _ensure_aiohttp(self):
         if importlib.util.find_spec("aiohttp") is not None:
             return
         logger.info("[diss] 正在自动安装 aiohttp...")
