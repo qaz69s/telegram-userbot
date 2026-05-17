@@ -21,8 +21,20 @@ pause()   { read -rp "  按 Enter 继续..." _; }
 
 require_python() {
     if [ -z "$PYTHON_BIN" ]; then
-        echo -e "${ERR} 未找到 Python3，请先安装"
-        exit 1
+        echo -e "${INFO} 未找到 Python3，尝试自动安装..."
+        if command -v apt-get &>/dev/null; then
+            apt-get update -qq
+            apt-get install -y python3 python3-venv python3-pip
+            PYTHON_BIN="$(command -v python3)"
+            echo -e "${OK} Python3 已安装"
+        elif command -v apk &>/dev/null; then
+            apk add python3 py3-pip
+            PYTHON_BIN="$(command -v python3)"
+            echo -e "${OK} Python3 已安装"
+        else
+            echo -e "${ERR} 无法自动安装 Python3，请手动安装后重试"
+            exit 1
+        fi
     fi
     PY_VER=$($PYTHON_BIN -c "import sys; print(sys.version_info[:2])" 2>/dev/null)
     echo -e "${OK} Python: $($PYTHON_BIN --version)  ($PYTHON_BIN)"
