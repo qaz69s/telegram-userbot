@@ -26,6 +26,7 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
 from telethon import events
+from telethon.errors import FloodWaitError
 from telethon.tl.functions.photos import UploadProfilePhotoRequest, DeletePhotosRequest
 from telethon.tl.types import InputPhoto
 
@@ -615,14 +616,26 @@ class PhPlugin(BasePlugin):
             uploaded = await self.client.upload_file(
                 io.BytesIO(png_bytes), file_name="avatar.png"
             )
-            await self.client(UploadProfilePhotoRequest(file=uploaded))
+
+            try:
+                await self.client(UploadProfilePhotoRequest(file=uploaded))
+            except FloodWaitError as e:
+                hours = e.seconds / 3600
+                logger.warning("[ph] 头像更换过于频繁，需等待 %.1f 小时 (%d秒)",
+                               hours, e.seconds)
+                # 启用模式下自动暂停，等限流结束再恢复
+                if self._enabled:
+                    self._enabled = False
+                    self._save_state()
+                    self._stop_loop()
+                    logger.info("[ph] 已自动暂停自动换头像，%d 秒后可手动 #ph on 恢复", e.seconds)
+                return False
 
             # 分批删除旧头像（Telegram API 单次请求有限制）
             try:
                 photos = await self.client.get_profile_photos("me")
                 if len(photos) > 1:
                     old_photos = photos[1:]
-                    # 每批最多删 50 张
                     for i in range(0, len(old_photos), 50):
                         batch = old_photos[i:i+50]
                         to_del = [
@@ -635,9 +648,12 @@ class PhPlugin(BasePlugin):
             except Exception as e:
                 logger.warning("[ph] 清理旧头像失败: %s", e)
 
-            self._last_photo_id = None
             self._save_state()
             return True
+        except FloodWaitError as e:
+            hours = e.seconds / 3600
+            logger.warning("[ph] 头像更换过于频繁，需等待 %.1f 小时", hours)
+            return False
         except Exception as e:
             logger.warning("[ph] 更新头像失败: %s", e)
             return False
