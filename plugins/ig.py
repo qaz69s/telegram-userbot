@@ -419,7 +419,7 @@ class IgPlugin(BasePlugin):
             return self._following_cache
         try:
             loop = asyncio.get_running_loop()
-            user_id = await loop.run_in_executor(None, self._cl.user_id)
+            user_id = self._cl.user_id
             following = await loop.run_in_executor(
                 None, lambda: self._cl.user_following(user_id, amount=0, use_cache=False)
             )
