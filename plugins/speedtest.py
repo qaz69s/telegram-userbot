@@ -31,8 +31,24 @@ _BIN = "speedtest"  # Ookla 官方 CLI 二进制名称
 _BASE_FLAGS = ["--accept-license", "--accept-gdpr", "--format=json"]
 
 
+def _is_official_cli() -> bool:
+    """判断当前 speedtest 是否为 Ookla 官方 CLI（而非 sivel Python 版）"""
+    if shutil.which(_BIN) is None:
+        return False
+    try:
+        r = subprocess.run(
+            [_BIN, "--version"], capture_output=True, text=True, timeout=10,
+        )
+        out = (r.stdout or "") + (r.stderr or "")
+        # 官方 CLI 版本输出形如 "Speedtest by Ookla ..."，sivel 版输出 "speedtest-cli x.y.z"
+        return "Ookla" in out
+    except Exception:
+        return False
+
+
 def _check_binary() -> bool:
-    return shutil.which(_BIN) is not None
+    """检查是否安装了 Ookla 官方 CLI（sivel Python 版视为不可用）"""
+    return _is_official_cli()
 
 
 def _do_install_binary():
@@ -40,6 +56,16 @@ def _do_install_binary():
     import os
     if not shutil.which("apt-get"):
         raise RuntimeError("当前系统不支持 apt-get，请手动安装: https://www.speedtest.net/apps/cli")
+
+    # 先移除不兼容的 sivel speedtest-cli（Python 版），避免参数冲突
+    for rm_cmd in (
+        ["apt-get", "remove", "-y", "speedtest-cli"],
+        ["pip3", "uninstall", "-y", "speedtest-cli"],
+    ):
+        try:
+            subprocess.run(rm_cmd, capture_output=True, timeout=60)
+        except Exception:
+            pass
 
     # 下载仓库配置脚本（避免 curl | bash）
     script_path = "/tmp/_ookla_speedtest_setup.sh"
@@ -167,13 +193,18 @@ class SpeedtestPlugin(BasePlugin):
     version     = "2.0.0"
 
     async def on_startup(self):
-        if not _check_binary():
-            logger.warning("[speedtest] 未找到 speedtest CLI，首次使用 #speedtest 时将自动安装")
-        else:
+        if _is_official_cli():
             logger.info("[speedtest] 插件就绪（Ookla 官方 CLI）")
+        elif shutil.which(_BIN):
+            logger.warning(
+                "[speedtest] 检测到不兼容的 speedtest-cli（sivel Python 版），"
+                "首次使用 #speedtest 时将自动替换为 Ookla 官方 CLI"
+            )
+        else:
+            logger.warning("[speedtest] 未找到 speedtest CLI，首次使用 #speedtest 时将自动安装")
 
     async def _ensure_binary(self, chat_id: int, tip_msg) -> bool:
-        """检查二进制是否存在，不存在则自动安装。返回 True 表示可用。"""
+        """检查是否为 Ookla 官方 CLI，不是则自动替换安装。返回 True 表示可用。"""
         if _check_binary():
             return True
 
@@ -185,7 +216,7 @@ class SpeedtestPlugin(BasePlugin):
             )
             return False
 
-        await tip_msg.edit("正在安装 speedtest CLI...")
+        await tip_msg.edit("正在安装/替换为 Ookla 官方 speedtest CLI...")
         try:
             loop = asyncio.get_running_loop()
             await loop.run_in_executor(None, _do_install_binary)
