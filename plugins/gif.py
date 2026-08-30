@@ -26,7 +26,7 @@ from core.plugin_base import BasePlugin
 logger = logging.getLogger(__name__)
 
 _MAX_FILE_SIZE = 50 * 1024 * 1024   # 50MB
-_MAX_DURATION = 10                  # 10秒
+_MAX_DURATION = 30                  # 30秒，超过自动截取前30秒
 _MAX_RES = 512                      # 贴纸最大边长
 _CRF = 15                           # 视频质量 0-51, 越低越好
 
@@ -39,7 +39,7 @@ _RANDOM_EMOJIS = [
 class GifPlugin(BasePlugin):
     name = "gif"
     description = "#gif 将 GIF/视频回复转为动态贴纸"
-    version = "1.1.0"
+    version = "1.2.0"
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -108,7 +108,7 @@ class GifPlugin(BasePlugin):
                 tip = await self.client.send_message(
                     event.chat_id,
                     "用法：回复一条 GIF/视频消息，然后发送 #gif\n"
-                    "限制：≤ 50MB，≤ 10 秒，自动缩放至 512x512"
+                    "限制：≤ 50MB，超过 30 秒自动截取，自动缩放至 512x512"
                 )
                 await asyncio.sleep(8)
                 try:
@@ -219,14 +219,15 @@ class GifPlugin(BasePlugin):
         await status_msg.edit("正在下载...")
         await self.client.download_media(replied, file=input_path)
 
-        # 检查时长（视频才有时长属性）
+        # 检查时长（视频才有时长属性）；超过上限自动截取前 _MAX_DURATION 秒
         dur = None
         for attr in replied.media.document.attributes:
             if isinstance(attr, DocumentAttributeVideo):
                 dur = attr.duration
                 break
         if dur and dur > _MAX_DURATION:
-            raise Exception(f"视频过长（{dur}秒），最大支持 10 秒")
+            await status_msg.edit(f"视频较长（{dur:.0f}秒），自动截取前 {_MAX_DURATION} 秒...")
+            dur = _MAX_DURATION
 
         # FFmpeg 转换
         await status_msg.edit("正在转换...")
