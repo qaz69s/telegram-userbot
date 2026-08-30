@@ -4,12 +4,13 @@
 用法:
   回复一条含 GIF/视频的消息，然后发送 #gif
 
-依赖: ffmpeg（需系统安装）
+依赖: ffmpeg（缺失时自动通过 apt-get 安装）
 """
 import asyncio
 import logging
 import re
 import os
+import shutil
 import subprocess
 import tempfile
 import random
@@ -38,7 +39,7 @@ _RANDOM_EMOJIS = [
 class GifPlugin(BasePlugin):
     name = "gif"
     description = "#gif 将 GIF/视频回复转为动态贴纸"
-    version = "1.0.0"
+    version = "1.1.0"
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -52,7 +53,43 @@ class GifPlugin(BasePlugin):
                 f.unlink()
             except Exception:
                 pass
+
+        # 确保 ffmpeg 可用（缺失时自动安装）
+        loop = asyncio.get_running_loop()
+        ok = await loop.run_in_executor(None, self._ensure_ffmpeg)
+        if ok:
+            logger.info("[gif] ffmpeg 就绪")
+        else:
+            logger.warning("[gif] ffmpeg 不可用，首次使用 #gif 时会再次尝试安装")
+
         logger.info("[gif] 插件就绪")
+
+    @staticmethod
+    def _ensure_ffmpeg() -> bool:
+        """确保 ffmpeg 可用；缺失时通过 apt-get 自动安装（Debian/Ubuntu）"""
+        if shutil.which("ffmpeg"):
+            return True
+        logger.warning("[gif] 未检测到 ffmpeg，尝试自动安装...")
+        try:
+            subprocess.run(
+                ["apt-get", "update", "-qq"],
+                capture_output=True, text=True, timeout=180,
+            )
+            r = subprocess.run(
+                ["apt-get", "install", "-y", "-qq", "ffmpeg"],
+                capture_output=True, text=True, timeout=600,
+            )
+            if r.returncode != 0:
+                logger.error("[gif] ffmpeg 自动安装失败: %s", r.stderr.strip()[-500:])
+                return False
+        except Exception as e:
+            logger.error("[gif] ffmpeg 自动安装异常: %s", e)
+            return False
+        if shutil.which("ffmpeg"):
+            logger.info("[gif] ffmpeg 自动安装成功")
+            return True
+        logger.warning("[gif] ffmpeg 安装后仍不可用")
+        return False
 
     async def setup(self):
         prefix = re.escape(self.config.get("CMD_PREFIX", "#"))
@@ -134,6 +171,29 @@ class GifPlugin(BasePlugin):
                 except Exception:
                     pass
                 return
+
+            # 确保 ffmpeg 可用（缺失时自动安装，兜底启动时的检测）
+            if not shutil.which("ffmpeg"):
+                tip = await self.client.send_message(
+                    event.chat_id, "服务器缺少 ffmpeg，正在自动安装，请稍候..."
+                )
+                loop = asyncio.get_running_loop()
+                ok = await loop.run_in_executor(None, self._ensure_ffmpeg)
+                try:
+                    await tip.delete()
+                except Exception:
+                    pass
+                if not ok:
+                    tip = await self.client.send_message(
+                        event.chat_id,
+                        "ffmpeg 自动安装失败，请手动在服务器执行：apt-get update && apt-get install -y ffmpeg",
+                    )
+                    await asyncio.sleep(8)
+                    try:
+                        await tip.delete()
+                    except Exception:
+                        pass
+                    return
 
             # 下载并转换
             msg = await self.client.send_message(event.chat_id, "正在转换...")
@@ -238,7 +298,12 @@ class GifPlugin(BasePlugin):
             cmd += ["-t", str(duration)]
         cmd += ["-f", "webm", output_path]
 
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+        except FileNotFoundError:
+            raise Exception("服务器未安装 ffmpeg（自动安装失败），请手动执行：apt-get install -y ffmpeg")
+        except subprocess.TimeoutExpired:
+            raise Exception("FFmpeg 转换超时（>120s）")
         if result.returncode != 0:
             err_msg = result.stderr.strip()
             # 移除 FFmpeg 版本标题
