@@ -28,7 +28,6 @@ logger = logging.getLogger(__name__)
 _MAX_FILE_SIZE = 50 * 1024 * 1024   # 50MB
 _MAX_DURATION = 30                  # 30秒，超过自动截取前30秒
 _MAX_RES = 512                      # 贴纸最大边长
-_CRF = 15                           # 视频质量 0-51, 越低越好
 
 _RANDOM_EMOJIS = [
     "😀", "😂", "😍", "🤩", "😎", "🥳", "🔥", "✨", "❤️", "💙",
@@ -39,7 +38,7 @@ _RANDOM_EMOJIS = [
 class GifPlugin(BasePlugin):
     name = "gif"
     description = "#gif 将 GIF/视频回复转为动态贴纸"
-    version = "1.2.1"
+    version = "1.3.0"
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -213,7 +212,7 @@ class GifPlugin(BasePlugin):
         """下载 → 转换 → 发送"""
         ts = str(random.randint(100000, 999999))
         input_path = str(self._tmp_dir / f"input_{ts}")
-        output_path = str(self._tmp_dir / f"sticker_{ts}.webm")
+        output_path = str(self._tmp_dir / f"sticker_{ts}.gif")
 
         # 下载 —— 必须捕获返回值作为实际路径！
         # download_media(file=...) 不保证按指定路径写入（Telethon 可能追加扩展名）
@@ -244,7 +243,7 @@ class GifPlugin(BasePlugin):
         if out_size > _MAX_FILE_SIZE:
             # 降低质量重试
             await status_msg.edit("文件过大，降低质量重试...")
-            await loop.run_in_executor(None, self._ffmpeg_convert, input_path, output_path, dur, 28)
+            await loop.run_in_executor(None, self._ffmpeg_convert, input_path, output_path, dur, 10)
             out_size = Path(output_path).stat().st_size
             if out_size > _MAX_FILE_SIZE:
                 raise Exception(f"压缩后仍超过 50MB，请使用更短的视频")
@@ -254,21 +253,11 @@ class GifPlugin(BasePlugin):
         emoji = random.choice(_RANDOM_EMOJIS)
 
         try:
-            # 用 send_file 发送 WebM 作为贴纸
+            # 用 send_file 发送 GIF（image/gif 客户端自动循环播放）
             await self.client.send_file(
                 chat_id,
                 file=output_path,
-                video_note=False,
-                supports_streaming=False,
-                attributes=[
-                    DocumentAttributeVideo(
-                        duration=min(dur or 3, _MAX_DURATION),
-                        w=_MAX_RES,
-                        h=_MAX_RES,
-                        supports_streaming=False,
-                    )
-                ],
-                mime_type="video/webm",
+                mime_type="image/gif",
                 force_document=False,
             )
         except Exception as e:
@@ -289,20 +278,24 @@ class GifPlugin(BasePlugin):
                 pass
 
     @staticmethod
-    def _ffmpeg_convert(input_path: str, output_path: str, duration: int = None, crf: int = _CRF):
-        """用 FFmpeg 转成 WebM 贴纸"""
+    def _ffmpeg_convert(input_path: str, output_path: str, duration: int = None, fps: int = 15):
+        """用 FFmpeg 转成 GIF 贴纸（palette 调色板防色带）"""
+        # scale 缩到 512 内 + pad 补黑边 + 限帧率 + 256 色 palette 量化
+        vf = (
+            f"scale='min({_MAX_RES},iw)':'min({_MAX_RES},ih)':force_original_aspect_ratio=decrease,"
+            f"pad={_MAX_RES}:{_MAX_RES}:(ow-iw)/2:(oh-ih)/2:color=black,"
+            f"fps={fps},split[a][b];[a]palettegen=max_colors=256[p];[b][p]paletteuse=dither=bayer"
+        )
         cmd = [
             "ffmpeg", "-y",
             "-i", input_path,
-            "-c:v", "libvpx-vp9",
-            "-b:v", "0",          # 使用 CRF 编码
-            f"-crf", str(crf),
-            "-vf", f"scale='min({_MAX_RES},iw)':'min({_MAX_RES},ih)':force_original_aspect_ratio=decrease",
+            "-vf", vf,
+            "-loop", "0",          # 无限循环
             "-an",                 # 去音频
         ]
         if duration:
             cmd += ["-t", str(duration)]
-        cmd += ["-f", "webm", output_path]
+        cmd += [output_path]
 
         try:
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
