@@ -39,7 +39,7 @@ _RANDOM_EMOJIS = [
 class GifPlugin(BasePlugin):
     name = "gif"
     description = "#gif 将 GIF/视频回复转为动态贴纸"
-    version = "1.2.0"
+    version = "1.2.1"
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -215,9 +215,14 @@ class GifPlugin(BasePlugin):
         input_path = str(self._tmp_dir / f"input_{ts}")
         output_path = str(self._tmp_dir / f"sticker_{ts}.webm")
 
-        # 下载
+        # 下载 —— 必须捕获返回值作为实际路径！
+        # download_media(file=...) 不保证按指定路径写入（Telethon 可能追加扩展名）
         await status_msg.edit("正在下载...")
-        await self.client.download_media(replied, file=input_path)
+        actual_path = await self.client.download_media(replied, file=input_path)
+        if not actual_path:
+            raise Exception("下载失败")
+        input_path = str(actual_path)
+        logger.info("[gif] 已下载到 %s", input_path)
 
         # 检查时长（视频才有时长属性）；超过上限自动截取前 _MAX_DURATION 秒
         dur = None
